@@ -11,3 +11,108 @@ execute:
 library(tidyverse)
 library(arrow)
 ```
+
+```{r}
+open_dataset("data/daily_prices.parquet")$schema
+```
+
+```{r}
+open_dataset("data/daily_prices.parquet") |>
+  filter(date_raw >= "2025-01-01") |>
+  group_by(coin_id) |>
+  summarise(avg_market_cap_usd = mean(market_cap_usd, na.rm = TRUE)) |>
+  arrange(desc(avg_market_cap_usd)) |>
+  collect()
+```
+
+```{r}
+#| cache: true
+prices <- read_parquet("data/daily_prices.parquet")
+metadata <- read_parquet("data/coin_metadata.parquet")
+categories <- read_parquet("data/categories.parquet")
+crypto <- prices |>
+  mutate(date = as.Date(date_raw)) |>
+  left_join(metadata, by = "coin_id") |>
+  left_join(
+    categories |> select(category_id, category_name),
+    by = "category_id"
+  )
+```
+
+```{r}
+metadata |>
+  select(coin_id, coin_name, launch_date) |>
+  print(n = 22)
+```
+
+```{r}
+prices |>
+  filter(coin_id == "btc") |>
+  ggplot(aes(x = as.Date(date_raw), y = price_usd)) +
+  geom_line() +
+  labs(
+    title = "Bitcoin Daily Price",
+    x = "Date",
+    y = "Price (USD)"
+  )
+```
+
+```{r}
+crypto |>
+  group_by(date, category_name) |>
+  summarise(
+    category_market_cap_usd = sum(market_cap_usd, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  group_by(date) |>
+  mutate(category_share = category_market_cap_usd /
+           sum(category_market_cap_usd) * 100) |>
+  ggplot(aes(
+    x = date,
+    y = category_share,
+    fill = forcats::fct_reorder(
+      category_name, category_share, .fun = median, .desc = TRUE
+    )
+  )) +
+  geom_area() +
+  annotate(
+    "rect",
+    xmin = as.Date("2022-05-07"), xmax = as.Date("2022-05-12"),
+    ymin = 0, ymax = 100, fill = "grey20", alpha = 0.15
+  ) +
+  annotate(
+    "rect",
+    xmin = as.Date("2022-11-08"), xmax = as.Date("2022-11-11"),
+    ymin = 0, ymax = 100, fill = "grey20", alpha = 0.15
+  ) +
+  annotate(
+    "text",
+    x = as.Date("2022-05-09"), y = 103,
+    label = "Luna/UST crash", size = 3
+  ) +
+  annotate(
+    "text",
+    x = as.Date("2022-11-09"), y = 103,
+    label = "FTX collapse", size = 3
+  ) +
+  scale_y_continuous(
+    limits = c(0, 110),
+    breaks = seq(0, 100, 20),
+    labels = scales::label_percent(scale = 1)
+  ) +
+  scale_fill_viridis_d(option = "D", name = "Category") +
+  labs(
+    title = "Crypto Market-Cap Share by Category",
+    subtitle = paste(
+      "Each band shows its category's share of the combined market cap",
+      "of the 22 tracked coins; bands sum to 100% each day."
+    ),
+    x = "Date",
+    y = "Share of combined market cap",
+    caption = paste(
+      "Source: course-provided daily_prices.parquet, coin_metadata.parquet,",
+      "and categories.parquet."
+    )
+  ) +
+  theme_minimal()
+```
